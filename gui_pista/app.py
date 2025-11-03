@@ -703,8 +703,16 @@ class TrajApp(
             self.measure_p1 = (self.measure_p1[0] * sx, self.measure_p1[1] * sy)
         if self.measure_p2 is not None:
             self.measure_p2 = (self.measure_p2[0] * sx, self.measure_p2[1] * sy)
-        if self.last_measure is not None:
-            self.last_measure = None
+        # Preserve and update the measurement overlay across scaling
+        try:
+            if self.measure_p1 is not None and self.measure_p2 is not None:
+                x1, y1 = self.measure_p1
+                x2, y2 = self.measure_p2
+                d_px = float(math.hypot(x2 - x1, y2 - y1))
+                d_m = float(self.px2m(d_px))
+                self.last_measure = ((x1, y1), (x2, y2), d_px, d_m)
+        except Exception:
+            pass
 
         if self.obstacle_points:
             self.obstacle_points = [(ox * sx, oy * sy) for (ox, oy) in self.obstacle_points]
@@ -781,6 +789,13 @@ class TrajApp(
 
         base_w, base_h = self.image_original.size
         old_w, old_h = self.image.size if self.image is not None else self.image_original.size
+        # Preserve current pixels-per-meter if this call is driven by vertical stretch only
+        prev_ppm = None
+        try:
+            if bool(getattr(self, "_handling_stretch_y", False)) and not bool(getattr(self, "_handling_stretch_x", False)):
+                prev_ppm = self.ppm()
+        except Exception:
+            prev_ppm = None
         new_w = max(1, int(round(base_w * scale_x)))
         new_h = max(1, int(round(base_h * scale_y)))
 
@@ -802,6 +817,22 @@ class TrajApp(
         self.image_scale_y = new_h / base_h if base_h else 1.0
 
         self.grid_spacing = new_h / self.grid_count if self.grid_count else None
+        # If only Y was stretched, keep horizontal distances (ppm) unchanged by
+        # compensating the scale parameter (sqm or mps) for the grid_spacing change.
+        if prev_ppm is not None and self.grid_spacing:
+            try:
+                if self.scale_mode.get() == "sqm":
+                    new_sqm = float(prev_ppm) / float(self.grid_spacing)
+                    self.squares_per_meter = new_sqm
+                    if hasattr(self, "sqm_var") and self.sqm_var is not None:
+                        self.sqm_var.set(new_sqm)
+                else:
+                    new_mps = float(self.grid_spacing) / float(prev_ppm)
+                    self.meters_per_square = new_mps
+                    if hasattr(self, "mps_var") and self.mps_var is not None:
+                        self.mps_var.set(new_mps)
+            except Exception:
+                pass
         self.update_scale()
         self._update_stretch_labels()
 
